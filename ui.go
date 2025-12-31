@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -55,6 +56,11 @@ func paint(enabled bool, s string, codes ...string) string {
 	return b.String()
 }
 
+// trueColor generates an ANSI true color escape sequence for RGB values
+func trueColor(r, g, b int) string {
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+}
+
 func bannerFor(f *os.File) string {
 	if os.Getenv("POKE_NO_BANNER") != "" {
 		return ""
@@ -77,23 +83,28 @@ func bannerFor(f *os.File) string {
 		return strings.Join(plain, "\n") + "\n"
 	}
 
-	// Line-by-line gradient-ish palette.
-	palette := [][]string{
-		{ansiBold, ansiCyan},
-		{ansiBold, ansiBlue},
-		{ansiBold, ansiMagenta},
-		{ansiBold, ansiCyan},
-		{ansiBold, ansiGreen},
-		{ansiBold, ansiYellow},
-		{ansiBold, ansiMagenta},
-		{ansiBold, ansiBlue},
-		{ansiBold, ansiCyan},
+	// Custom palette: UI/UX-1 through UI/UX-5
+	// UI/UX-1: #D9C0A3 (216, 192, 162) - light beige
+	// UI/UX-2: #D9A273 (216, 162, 114) - light orange
+	// UI/UX-3: #D9763D (216, 117, 60) - orange
+	// UI/UX-4: #BF3E21 (191, 61, 32) - dark red-orange
+	// UI/UX-5: #400702 (63, 7, 1) - very dark red
+	palette := []string{
+		trueColor(216, 192, 162), // UI/UX-1
+		trueColor(216, 162, 114), // UI/UX-2
+		trueColor(216, 117, 60),  // UI/UX-3
+		trueColor(191, 61, 32),   // UI/UX-4
+		trueColor(63, 7, 1),      // UI/UX-5
 	}
+
+	// Create gradient pattern across 9 lines
+	// Distribute colors: 1, 1, 2, 2, 3, 3, 4, 4, 5
+	colorIndices := []int{0, 0, 1, 1, 2, 2, 3, 3, 4}
 
 	out := make([]string, 0, len(plain))
 	for i, line := range plain {
-		codes := palette[i%len(palette)]
-		out = append(out, paint(true, line, codes...))
+		colorCode := palette[colorIndices[i]]
+		out = append(out, paint(true, line, ansiBold, colorCode))
 	}
 	return strings.Join(out, "\n") + "\n"
 }

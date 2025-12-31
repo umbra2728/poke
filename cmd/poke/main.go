@@ -42,6 +42,9 @@ type config struct {
 	mutate      bool
 	mutateMax   int
 	retry       retryConfig
+	jsonlOut    string
+	csvOut      string
+	ciExitCodes bool
 }
 
 func main() {
@@ -65,6 +68,11 @@ func main() {
 	}
 
 	if err := run(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
+		var te thresholdExceededError
+		if cfg.ciExitCodes && errors.As(err, &te) {
+			log.Printf("%s %v", styledErrorPrefix(), err)
+			os.Exit(te.ExitCode())
+		}
 		log.Fatalf("%s %v", styledErrorPrefix(), err)
 	}
 }
@@ -88,6 +96,9 @@ func parseFlags(args []string) (config, error) {
 	fs.IntVar(&cfg.retry.MaxRetries, "retries", 0, "Max retries for transport errors/429/5xx; 0 = disabled")
 	fs.DurationVar(&cfg.retry.BackoffMin, "backoff-min", 200*time.Millisecond, "Min retry backoff delay")
 	fs.DurationVar(&cfg.retry.BackoffMax, "backoff-max", 5*time.Second, "Max retry backoff delay; 0 = no cap")
+	fs.StringVar(&cfg.jsonlOut, "jsonl-out", "", "Write per-request results to JSONL file (path); optional")
+	fs.StringVar(&cfg.csvOut, "csv-out", "", "Write per-request results to CSV file (path); optional")
+	fs.BoolVar(&cfg.ciExitCodes, "ci-exit-codes", false, "Use CI-friendly exit codes when marker stop thresholds trigger (2=warn/info, 3=error, 4=critical)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -109,6 +120,12 @@ func parseFlags(args []string) (config, error) {
 	}
 	if err := cfg.retry.validate(); err != nil {
 		return config{}, usageError(err, fs)
+	}
+	if cfg.jsonlOut == "-" || cfg.csvOut == "-" {
+		return config{}, fmt.Errorf("structured outputs must be file paths; '-' is not supported (keeps stdout human-friendly)")
+	}
+	if cfg.jsonlOut != "" && cfg.csvOut != "" && cfg.jsonlOut == cfg.csvOut {
+		return config{}, fmt.Errorf("-jsonl-out and -csv-out must not be the same path")
 	}
 	cfg.method = strings.ToUpper(strings.TrimSpace(cfg.method))
 	if cfg.method == "" {
@@ -179,7 +196,18 @@ func run(ctx context.Context, cfg config) error {
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	stats := newReport(analyzer, mcfg.Categories, cancel)
+
+	sink, err := newResultSink(cfg.jsonlOut, cfg.csvOut)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if sink != nil {
+			_ = sink.Close()
+		}
+	}()
+
+	stats := newReport(analyzer, mcfg.Categories, cancel, sink)
 
 	wg.Add(cfg.workers)
 	for i := 0; i < cfg.workers; i++ {
@@ -202,6 +230,11 @@ func run(ctx context.Context, cfg config) error {
 
 	if err := <-readErr; err != nil && !errors.Is(err, context.Canceled) {
 		return err
+	}
+	if sink != nil {
+		if err := sink.Close(); err != nil {
+			return err
+		}
 	}
 
 	stats.LogSummary()

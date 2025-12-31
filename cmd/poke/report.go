@@ -13,6 +13,7 @@ type report struct {
 	mu       sync.Mutex
 	analyzer *responseAnalyzer
 	cancel   func(error)
+	sink     *resultSink
 
 	total    int
 	errs     int
@@ -40,6 +41,30 @@ type report struct {
 	top  []offendingResponse
 }
 
+type thresholdExceededError struct {
+	Category  MarkerCategory
+	Kind      string // "responses" | "matches"
+	Current   int
+	Limit     int
+	Severity  severityLevel
+}
+
+func (e thresholdExceededError) Error() string {
+	return fmt.Sprintf("threshold exceeded: category %s %s %d >= %d", e.Category, e.Kind, e.Current, e.Limit)
+}
+
+func (e thresholdExceededError) ExitCode() int {
+	// CI-friendly buckets: 2=warn/info, 3=error, 4=critical.
+	switch e.Severity {
+	case severityCritical:
+		return 4
+	case severityError:
+		return 3
+	default:
+		return 2
+	}
+}
+
 type offendingResponse struct {
 	Score           int
 	StatusCode      int
@@ -50,13 +75,14 @@ type offendingResponse struct {
 	Error           string
 }
 
-func newReport(analyzer *responseAnalyzer, policy map[MarkerCategory]categoryPolicy, cancel func(error)) *report {
+func newReport(analyzer *responseAnalyzer, policy map[MarkerCategory]categoryPolicy, cancel func(error), sink *resultSink) *report {
 	if policy == nil {
 		policy = defaultMarkerConfig().Categories
 	}
 	return &report{
 		analyzer:             analyzer,
 		cancel:               cancel,
+		sink:                 sink,
 		byStatus:             make(map[int]int),
 		markerMatchCounts:    make(map[string]int),
 		markerResponseCounts: make(map[string]int),
@@ -87,11 +113,15 @@ func (r *report) RecordResult(res RequestResult) {
 	var totalMatches int
 	categorySeen := make(map[MarkerCategory]bool, 4)
 	categoryMatches := make(map[MarkerCategory]int, 4)
+	reqSeverity := severityInfo
 	for _, h := range hits {
 		markerIDs = append(markerIDs, h.ID)
 		totalMatches += h.Count
 		categorySeen[h.Category] = true
 		categoryMatches[h.Category] += h.Count
+		if p, ok := r.categoryPolicy[h.Category]; ok && p.Severity > reqSeverity {
+			reqSeverity = p.Severity
+		}
 	}
 
 	score := offenseScoreWeighted(hits, r.categoryPolicy)
@@ -115,9 +145,11 @@ func (r *report) RecordResult(res RequestResult) {
 	var thresholdLog *string
 	var thresholdCancel func(error)
 	var thresholdErr error
+	var seq int
 
 	r.mu.Lock()
 	r.total++
+	seq = r.total
 	if res.Retries > 0 {
 		r.retried++
 		r.retries += res.Retries
@@ -179,11 +211,23 @@ func (r *report) RecordResult(res RequestResult) {
 	if r.stopErr == nil {
 		for c, p := range r.categoryPolicy {
 			if p.StopAfterResponses > 0 && r.categoryRespCounts[c] >= p.StopAfterResponses {
-				r.stopErr = fmt.Errorf("threshold exceeded: category %s responses %d >= %d", c, r.categoryRespCounts[c], p.StopAfterResponses)
+				r.stopErr = thresholdExceededError{
+					Category: c,
+					Kind:     "responses",
+					Current:  r.categoryRespCounts[c],
+					Limit:    p.StopAfterResponses,
+					Severity: p.Severity,
+				}
 				break
 			}
 			if p.StopAfterMatches > 0 && r.categoryMatchCounts[c] >= p.StopAfterMatches {
-				r.stopErr = fmt.Errorf("threshold exceeded: category %s matches %d >= %d", c, r.categoryMatchCounts[c], p.StopAfterMatches)
+				r.stopErr = thresholdExceededError{
+					Category: c,
+					Kind:     "matches",
+					Current:  r.categoryMatchCounts[c],
+					Limit:    p.StopAfterMatches,
+					Severity: p.Severity,
+				}
 				break
 			}
 		}
@@ -210,6 +254,32 @@ func (r *report) RecordResult(res RequestResult) {
 		progressLog = &s
 	}
 	r.mu.Unlock()
+
+	if r.sink != nil {
+		bodyPreview := ""
+		if len(res.Body) > 0 {
+			bodyPreview = previewOneLineBytes(res.Body, 400)
+		}
+		ev := requestEvent{
+			Time:       time.Now(),
+			Seq:        seq,
+			WorkerID:   res.WorkerID,
+			Prompt:     res.Prompt,
+			Attempts:   res.Attempts,
+			Retries:    res.Retries,
+			StatusCode: res.StatusCode,
+			Latency:    res.Latency,
+			BodyLen:    len(res.Body),
+			BodyPreview: bodyPreview,
+			MarkerHits: hits,
+			Score:      score,
+			Severity:   reqSeverity,
+		}
+		if res.Err != nil {
+			ev.Error = res.Err.Error()
+		}
+		r.sink.Write(ev)
+	}
 
 	if progressLog != nil {
 		log.Print(*progressLog)

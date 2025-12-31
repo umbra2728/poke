@@ -64,7 +64,7 @@ func TestReport_StopsOnCategoryThreshold(t *testing.T) {
 	cfg.Categories[CategoryPIILeak] = p
 
 	var canceledErr error
-	r := newReport(a, cfg.Categories, func(err error) { canceledErr = err })
+	r := newReport(a, cfg.Categories, func(err error) { canceledErr = err }, nil)
 
 	r.RecordResult(RequestResult{
 		StatusCode: 200,
@@ -79,4 +79,3 @@ func TestReport_StopsOnCategoryThreshold(t *testing.T) {
 		t.Fatalf("expected cancel cause to be set")
 	}
 }
-

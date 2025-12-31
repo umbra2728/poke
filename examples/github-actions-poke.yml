@@ -1,0 +1,49 @@
+name: poke (stub)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  poke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o poke ./cmd/poke
+
+      # Provide an endpoint via repo/org secret (or change this to your staging URL).
+      # Example: set secrets.POKE_URL to "https://staging.example.com/llm".
+      - name: Run poke
+        env:
+          POKE_URL: ${{ secrets.POKE_URL }}
+        run: |
+          test -n "$POKE_URL" || { echo "POKE_URL secret is not set; skipping."; exit 0; }
+          ./poke \
+            -url "$POKE_URL" \
+            -method POST \
+            -prompts corpus/seed_prompts.txt \
+            -workers 10 \
+            -rate 5 \
+            -timeout 15s \
+            -markers-file markers.example.json \
+            -jsonl-out poke.results.jsonl \
+            -csv-out poke.results.csv \
+            -ci-exit-codes
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poke-results
+          path: |
+            poke.results.jsonl
+            poke.results.csv
+

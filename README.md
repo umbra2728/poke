@@ -11,6 +11,7 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-prompts` (required): prompt file or `-` for stdin.
 - `-headers-file`: `Header-Name: value` per line.
 - `-cookies-file`: `name=value` per line.
+- `-markers-file`: markers config JSON (regexes + per-category thresholds); see `markers.example.json`.
 - `-workers`: concurrent workers (default 10).
 - `-rate`: global RPS cap, 0 = unlimited.
 - `-timeout`: per-request timeout.
@@ -31,8 +32,15 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 
 ## Output & detection
 - Progress log every 100 requests.
-- Final summary: HTTP status counts, latency min/avg/max, marker counts, top offending responses (prompt + response preview).
-- Marker categories: jailbreak success (ignore/bypass/system prompt reveals), system/internal leak hints, HTTP 4xx/5xx, and rate-limit signals (429/Retry-After/phrases).
+- Final summary: HTTP status counts, latency min/avg/max, overall severity, marker counts, top offending responses (prompt + response preview).
+- Marker categories include jailbreak success, system/internal leak hints, PII patterns, credential/key material, file path/env hints, HTTP 4xx/5xx, and rate-limit signals (429/Retry-After/phrases).
+
+## Markers & thresholds
+Markers are regex-driven and configurable at runtime via `-markers-file` (JSON).
+
+- By default, `-markers-file` *merges* with the built-in marker set (override by matching `category` + `id`, or add new ones).
+- Set `"replace_defaults": true` to provide a fully custom regex set.
+- Per-category thresholds can stop the run early (`stop_after_responses` / `stop_after_matches`) or elevate the run's reported severity (`elevate_after_responses` + `elevate_to`).
 
 ## Prompt mutations
 Lightweight generators add noisy prefixes/suffixes, delimiter tweaks, and role swaps to widen coverage without hand-writing every payload.

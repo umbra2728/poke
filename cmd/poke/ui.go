@@ -159,6 +159,14 @@ func styledCategoryKey(c MarkerCategory) string {
 		return styledKey(key, ansiMagenta, ansiBold)
 	case CategorySystemLeak:
 		return styledKey(key, ansiYellow, ansiBold)
+	case CategoryPIILeak:
+		return styledKey(key, ansiYellow, ansiBold)
+	case CategoryCredentialLeak:
+		return styledKey(key, ansiRed, ansiBold)
+	case CategoryKeyPhraseLeak:
+		return styledKey(key, ansiRed, ansiBold)
+	case CategoryFilePathLeak:
+		return styledKey(key, ansiCyan, ansiBold)
 	case CategoryHTTPError:
 		return styledKey(key, ansiRed, ansiBold)
 	case CategoryRateLimit:

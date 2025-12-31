@@ -12,6 +12,7 @@ import (
 type report struct {
 	mu       sync.Mutex
 	analyzer *responseAnalyzer
+	cancel   func(error)
 
 	total    int
 	errs     int
@@ -28,6 +29,12 @@ type report struct {
 	markerMatchCounts    map[string]int
 	markerResponseCounts map[string]int
 	categoryRespCounts   map[MarkerCategory]int
+	categoryMatchCounts  map[MarkerCategory]int
+
+	categoryPolicy map[MarkerCategory]categoryPolicy
+	maxSeverity    severityLevel
+	stopErr        error
+	elevated       map[MarkerCategory]bool
 
 	topN int
 	top  []offendingResponse
@@ -43,13 +50,21 @@ type offendingResponse struct {
 	Error           string
 }
 
-func newReport(analyzer *responseAnalyzer) *report {
+func newReport(analyzer *responseAnalyzer, policy map[MarkerCategory]categoryPolicy, cancel func(error)) *report {
+	if policy == nil {
+		policy = defaultMarkerConfig().Categories
+	}
 	return &report{
 		analyzer:             analyzer,
+		cancel:               cancel,
 		byStatus:             make(map[int]int),
 		markerMatchCounts:    make(map[string]int),
 		markerResponseCounts: make(map[string]int),
 		categoryRespCounts:   make(map[MarkerCategory]int),
+		categoryMatchCounts:  make(map[MarkerCategory]int),
+		categoryPolicy:       policy,
+		maxSeverity:          severityInfo,
+		elevated:             make(map[MarkerCategory]bool),
 		topN:                 10,
 		latencyMin:           0,
 		latencyMax:           0,
@@ -71,13 +86,15 @@ func (r *report) RecordResult(res RequestResult) {
 	var markerIDs []string
 	var totalMatches int
 	categorySeen := make(map[MarkerCategory]bool, 4)
+	categoryMatches := make(map[MarkerCategory]int, 4)
 	for _, h := range hits {
 		markerIDs = append(markerIDs, h.ID)
 		totalMatches += h.Count
 		categorySeen[h.Category] = true
+		categoryMatches[h.Category] += h.Count
 	}
 
-	score := offenseScore(len(markerIDs), totalMatches)
+	score := offenseScoreWeighted(hits, r.categoryPolicy)
 	var offender *offendingResponse
 	if score > 0 {
 		off := offendingResponse{
@@ -95,6 +112,9 @@ func (r *report) RecordResult(res RequestResult) {
 	}
 
 	var progressLog *string
+	var thresholdLog *string
+	var thresholdCancel func(error)
+	var thresholdErr error
 
 	r.mu.Lock()
 	r.total++
@@ -130,6 +150,50 @@ func (r *report) RecordResult(res RequestResult) {
 	for c := range categorySeen {
 		r.categoryRespCounts[c]++
 	}
+	for c, n := range categoryMatches {
+		r.categoryMatchCounts[c] += n
+	}
+
+	for c := range categorySeen {
+		if p, ok := r.categoryPolicy[c]; ok {
+			if p.Severity > r.maxSeverity {
+				r.maxSeverity = p.Severity
+			}
+			if p.ElevateAfterResponses > 0 && r.categoryRespCounts[c] >= p.ElevateAfterResponses && !r.elevated[c] {
+				r.elevated[c] = true
+				if p.ElevateTo > r.maxSeverity {
+					r.maxSeverity = p.ElevateTo
+				}
+				s := fmt.Sprintf(
+					"%s: category=%s responses=%d elevate_to=%s",
+					styledKey("severity_elevated", ansiYellow, ansiBold),
+					styledValue(c.String(), ansiCyan, ansiBold),
+					r.categoryRespCounts[c],
+					styledValue(p.ElevateTo.String(), ansiYellow, ansiBold),
+				)
+				thresholdLog = &s
+			}
+		}
+	}
+
+	if r.stopErr == nil {
+		for c, p := range r.categoryPolicy {
+			if p.StopAfterResponses > 0 && r.categoryRespCounts[c] >= p.StopAfterResponses {
+				r.stopErr = fmt.Errorf("threshold exceeded: category %s responses %d >= %d", c, r.categoryRespCounts[c], p.StopAfterResponses)
+				break
+			}
+			if p.StopAfterMatches > 0 && r.categoryMatchCounts[c] >= p.StopAfterMatches {
+				r.stopErr = fmt.Errorf("threshold exceeded: category %s matches %d >= %d", c, r.categoryMatchCounts[c], p.StopAfterMatches)
+				break
+			}
+		}
+		if r.stopErr != nil && r.cancel != nil {
+			thresholdCancel = r.cancel
+			thresholdErr = r.stopErr
+			s := fmt.Sprintf("%s: %s", styledKey("stop", ansiRed, ansiBold), styledValue(r.stopErr.Error(), ansiRed))
+			thresholdLog = &s
+		}
+	}
 
 	if offender != nil {
 		r.maybeAddTopLocked(*offender)
@@ -149,6 +213,12 @@ func (r *report) RecordResult(res RequestResult) {
 
 	if progressLog != nil {
 		log.Print(*progressLog)
+	}
+	if thresholdLog != nil {
+		log.Print(*thresholdLog)
+	}
+	if thresholdCancel != nil && thresholdErr != nil {
+		thresholdCancel(thresholdErr)
 	}
 }
 
@@ -176,6 +246,7 @@ func (r *report) LogSummary() {
 	defer r.mu.Unlock()
 
 	log.Printf("%s: sent=%d errs=%d", styledKey("done", ansiGreen, ansiBold), r.total, r.errs)
+	log.Printf("%s: %s", styledKey("severity", ansiYellow, ansiBold), styledValue(r.maxSeverity.String(), ansiYellow, ansiBold))
 	if r.retried > 0 {
 		log.Printf("%s: requests=%d retries=%d", styledKey("retried", ansiYellow, ansiBold), r.retried, r.retries)
 	}
@@ -270,12 +341,30 @@ func (r *report) LogSummary() {
 	}
 }
 
-func offenseScore(distinctMarkers int, totalMatches int) int {
+func offenseScoreWeighted(hits []MarkerHit, policy map[MarkerCategory]categoryPolicy) int {
+	if len(hits) == 0 {
+		return 0
+	}
+	distinctMarkers := 0
+	totalMatches := 0
+	weightedMatches := 0
+	for _, h := range hits {
+		if h.Count <= 0 {
+			continue
+		}
+		distinctMarkers++
+		totalMatches += h.Count
+		w := 1
+		if p, ok := policy[h.Category]; ok && p.ScoreWeight > 0 {
+			w = p.ScoreWeight
+		}
+		weightedMatches += h.Count * w
+	}
 	if distinctMarkers == 0 || totalMatches == 0 {
 		return 0
 	}
-	// Favor responses that trip many marker types even if each only matches once.
-	return distinctMarkers*2 + totalMatches
+	// Favor responses that trip many marker types even if each only matches once; amplify by category weights.
+	return distinctMarkers*2 + weightedMatches
 }
 
 func previewOneLine(s string, maxChars int) string {
@@ -310,4 +399,10 @@ func previewOneLineBytes(b []byte, maxChars int) string {
 		maxBytes = len(b)
 	}
 	return previewOneLine(string(b[:maxBytes]), maxChars)
+}
+
+func (r *report) ThresholdError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopErr
 }

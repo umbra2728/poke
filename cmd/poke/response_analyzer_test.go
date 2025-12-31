@@ -7,7 +7,10 @@ import (
 )
 
 func TestResponseAnalyzer_BodyMarkers(t *testing.T) {
-	a := newResponseAnalyzer()
+	a, err := newResponseAnalyzer(defaultMarkerConfig())
+	if err != nil {
+		t.Fatalf("newResponseAnalyzer: %v", err)
+	}
 
 	res := RequestResult{
 		Prompt:     "seed",
@@ -26,7 +29,10 @@ func TestResponseAnalyzer_BodyMarkers(t *testing.T) {
 }
 
 func TestResponseAnalyzer_StatusMarkers(t *testing.T) {
-	a := newResponseAnalyzer()
+	a, err := newResponseAnalyzer(defaultMarkerConfig())
+	if err != nil {
+		t.Fatalf("newResponseAnalyzer: %v", err)
+	}
 
 	res := RequestResult{StatusCode: 503}
 	hits := a.Analyze(res)
@@ -36,7 +42,10 @@ func TestResponseAnalyzer_StatusMarkers(t *testing.T) {
 }
 
 func TestResponseAnalyzer_RateLimitMarkers(t *testing.T) {
-	a := newResponseAnalyzer()
+	a, err := newResponseAnalyzer(defaultMarkerConfig())
+	if err != nil {
+		t.Fatalf("newResponseAnalyzer: %v", err)
+	}
 
 	res := RequestResult{
 		StatusCode: 429,

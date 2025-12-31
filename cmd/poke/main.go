@@ -34,6 +34,7 @@ type config struct {
 	method      string
 	headersFile string
 	cookiesFile string
+	markersFile string
 	workers     int
 	rate        float64
 	timeout     time.Duration
@@ -77,6 +78,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.method, "method", defaultMethod, "HTTP method (GET/POST/...)")
 	fs.StringVar(&cfg.headersFile, "headers-file", "", "Path to headers file (Key: Value per line); optional")
 	fs.StringVar(&cfg.cookiesFile, "cookies-file", "", "Path to cookies file (name=value per line); optional")
+	fs.StringVar(&cfg.markersFile, "markers-file", "", "Path to markers config JSON (regexes + per-category thresholds); optional")
 	fs.IntVar(&cfg.workers, "workers", defaultWorkers, "Number of concurrent workers")
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
@@ -161,8 +163,23 @@ func run(ctx context.Context, cfg config) error {
 	prompts := make(chan string, cfg.workers*2)
 	var wg sync.WaitGroup
 
-	analyzer := newResponseAnalyzer()
-	stats := newReport(analyzer)
+	mcfg := defaultMarkerConfig()
+	if cfg.markersFile != "" {
+		loaded, err := loadMarkerConfigFile(cfg.markersFile)
+		if err != nil {
+			return err
+		}
+		mcfg = loaded
+	}
+
+	analyzer, err := newResponseAnalyzer(mcfg)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stats := newReport(analyzer, mcfg.Categories, cancel)
 
 	wg.Add(cfg.workers)
 	for i := 0; i < cfg.workers; i++ {
@@ -188,6 +205,9 @@ func run(ctx context.Context, cfg config) error {
 	}
 
 	stats.LogSummary()
+	if err := stats.ThresholdError(); err != nil {
+		return err
+	}
 	return nil
 }
 

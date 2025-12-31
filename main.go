@@ -52,14 +52,18 @@ func main() {
 			fmt.Fprint(os.Stdout, he.usage)
 			return
 		}
-		log.Fatalf("error: %v", err)
+		log.Fatalf("%s %v", styledErrorPrefix(), err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	if b := bannerFor(os.Stderr); b != "" {
+		log.Print(b)
+	}
+
 	if err := run(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("error: %v", err)
+		log.Fatalf("%s %v", styledErrorPrefix(), err)
 	}
 }
 
@@ -119,6 +123,10 @@ func (e helpError) Error() string { return "help requested" }
 
 func usageText(fs *flag.FlagSet) string {
 	var b strings.Builder
+	if banner := bannerFor(os.Stdout); banner != "" {
+		b.WriteString(banner)
+		b.WriteString("\n")
+	}
 	b.WriteString("Usage:\n  poke -url URL -prompts FILE [flags]\n\nFlags:\n")
 	fs.SetOutput(&b)
 	fs.PrintDefaults()

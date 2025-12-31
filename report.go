@@ -130,7 +130,13 @@ func (r *report) RecordResult(res RequestResult) {
 	}
 
 	if r.total%progressEveryN == 0 {
-		s := fmt.Sprintf("progress: sent=%d last_status=%d last_latency=%s", r.total, res.StatusCode, res.Latency)
+		s := fmt.Sprintf(
+			"%s: sent=%d last_status=%s last_latency=%s",
+			styledKey("progress", ansiCyan, ansiBold),
+			r.total,
+			styledStatusCode(res.StatusCode),
+			styledValue(res.Latency.String(), ansiBlue),
+		)
 		progressLog = &s
 	}
 	r.mu.Unlock()
@@ -163,14 +169,20 @@ func (r *report) LogSummary() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	log.Printf("done: sent=%d errs=%d", r.total, r.errs)
+	log.Printf("%s: sent=%d errs=%d", styledKey("done", ansiGreen, ansiBold), r.total, r.errs)
 	if r.firstErr != nil {
-		log.Printf("first_error: %v", r.firstErr)
+		log.Printf("%s: %v", styledKey("first_error", ansiRed, ansiBold), r.firstErr)
 	}
 
 	if r.latencyCount > 0 {
 		avg := time.Duration(int64(r.latencyTotal) / int64(r.latencyCount))
-		log.Printf("latency: min=%s avg=%s max=%s", r.latencyMin, avg, r.latencyMax)
+		log.Printf(
+			"%s: min=%s avg=%s max=%s",
+			styledKey("latency", ansiBlue, ansiBold),
+			styledValue(r.latencyMin.String(), ansiBlue),
+			styledValue(avg.String(), ansiBlue),
+			styledValue(r.latencyMax.String(), ansiBlue),
+		)
 	}
 
 	if len(r.byStatus) > 0 {
@@ -180,7 +192,7 @@ func (r *report) LogSummary() {
 		}
 		sort.Ints(codes)
 		for _, code := range codes {
-			log.Printf("status_%d: %d", code, r.byStatus[code])
+			log.Printf("%s: %d", styledStatusKey(code), r.byStatus[code])
 		}
 	}
 
@@ -191,7 +203,7 @@ func (r *report) LogSummary() {
 		}
 		sort.Strings(cats)
 		for _, c := range cats {
-			log.Printf("category_%s_responses: %d", c, r.categoryRespCounts[MarkerCategory(c)])
+			log.Printf("%s: %d", styledCategoryKey(MarkerCategory(c)), r.categoryRespCounts[MarkerCategory(c)])
 		}
 	}
 
@@ -214,29 +226,36 @@ func (r *report) LogSummary() {
 			}
 			return rows[i].id < rows[j].id
 		})
-		log.Printf("markers: (responses / matches)")
-		for _, r := range rows {
-			log.Printf("marker_%s: %d / %d", r.id, r.responses, r.matches)
+		log.Printf("%s: (responses / matches)", styledKey("markers", ansiCyan, ansiBold))
+		for _, row := range rows {
+			log.Printf("%s: %d / %d", styledMarkerKey(row.id), row.responses, row.matches)
 		}
 	}
 
 	if len(r.top) > 0 {
-		log.Printf("top_offenders:")
+		log.Printf("%s:", styledKey("top_offenders", ansiMagenta, ansiBold))
 		for i, off := range r.top {
 			ids := strings.Join(off.MarkerIDs, ",")
 			if ids == "" {
 				ids = "-"
 			}
-			line := fmt.Sprintf("#%d score=%d status=%d latency=%s markers=%s", i+1, off.Score, off.StatusCode, off.Latency, ids)
+			line := fmt.Sprintf(
+				"%s score=%s status=%s latency=%s markers=%s",
+				styledValue("#"+intToString(i+1), ansiMagenta, ansiBold),
+				styledValue(intToString(off.Score), ansiYellow, ansiBold),
+				styledStatusCode(off.StatusCode),
+				styledValue(off.Latency.String(), ansiBlue),
+				styledValue(ids, ansiCyan),
+			)
 			if off.Error != "" {
-				line += " err=" + previewOneLine(off.Error, 140)
+				line += " " + styledKey("err", ansiRed, ansiBold) + "=" + previewOneLine(off.Error, 140)
 			}
 			log.Print(line)
 			if off.PromptPreview != "" {
-				log.Printf("  prompt=%q", off.PromptPreview)
+				log.Printf("%s%q", styledDetailPrefix("  prompt="), off.PromptPreview)
 			}
 			if off.ResponsePreview != "" {
-				log.Printf("  resp=%q", off.ResponsePreview)
+				log.Printf("%s%q", styledDetailPrefix("  resp="), off.ResponsePreview)
 			}
 		}
 	}

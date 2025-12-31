@@ -14,6 +14,9 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-workers`: concurrent workers (default 10).
 - `-rate`: global RPS cap, 0 = unlimited.
 - `-timeout`: per-request timeout.
+- `-retries`: max retries for transport errors/429/5xx; `0` = disabled.
+- `-backoff-min`: minimum retry backoff delay.
+- `-backoff-max`: maximum retry backoff delay; `0` = no cap.
 - `-mutate`: enable simple mutations (prefix/suffix noise, role swaps, delimiter changes).
 - `-mutate-max`: cap variants per seed prompt (including the original); `<=0` means unlimited.
 
@@ -36,7 +39,7 @@ Lightweight generators add noisy prefixes/suffixes, delimiter tweaks, and role s
 
 ## Roadmap ideas
 - Configurable body schema (templated JSON/query parameters beyond `prompt`).
-- Retry/backoff and jittered rate limiting for sturdier runs.
+- Jittered rate limiting for sturdier runs.
 - Richer markers (file/path/key leaks, PII snippets) and per-category thresholds for exits.
 - Optional structured output (JSONL) for pipeline ingestion and CI gating.
 - Auth helpers: header/cookie presets and env var expansion.

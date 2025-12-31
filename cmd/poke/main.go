@@ -40,6 +40,7 @@ type config struct {
 	promptsFile string
 	mutate      bool
 	mutateMax   int
+	retry       retryConfig
 }
 
 func main() {
@@ -82,6 +83,9 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.promptsFile, "prompts", "", "Prompt source file (one prompt per line); use '-' for stdin (required)")
 	fs.BoolVar(&cfg.mutate, "mutate", false, "Generate simple mutations (prefix/suffix noise, role swaps, delimiter changes)")
 	fs.IntVar(&cfg.mutateMax, "mutate-max", 12, "Max prompt variants per seed when -mutate is set (including the original); <=0 = unlimited")
+	fs.IntVar(&cfg.retry.MaxRetries, "retries", 0, "Max retries for transport errors/429/5xx; 0 = disabled")
+	fs.DurationVar(&cfg.retry.BackoffMin, "backoff-min", 200*time.Millisecond, "Min retry backoff delay")
+	fs.DurationVar(&cfg.retry.BackoffMax, "backoff-max", 5*time.Second, "Max retry backoff delay; 0 = no cap")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -100,6 +104,9 @@ func parseFlags(args []string) (config, error) {
 	}
 	if cfg.mutateMax == 0 {
 		// Accept 0 (unlimited) but keep the flag description simple.
+	}
+	if err := cfg.retry.validate(); err != nil {
+		return config{}, usageError(err, fs)
 	}
 	cfg.method = strings.ToUpper(strings.TrimSpace(cfg.method))
 	if cfg.method == "" {
@@ -230,7 +237,7 @@ func sendOne(
 		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("parse -url: %w", err)}
 	}
 
-	var body io.Reader
+	var bodyBytes []byte
 	if cfg.method == http.MethodGet {
 		q := u.Query()
 		q.Set(defaultJSONKey, prompt)
@@ -241,37 +248,70 @@ func sendOne(
 		if err != nil {
 			return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("marshal json payload: %w", err)}
 		}
-		body = bytes.NewReader(b)
+		bodyBytes = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, cfg.method, u.String(), body)
-	if err != nil {
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("build request: %w", err)}
-	}
+	var attempts int
+	var retries int
 
-	for k, vs := range baseHeaders {
-		for _, v := range vs {
-			req.Header.Add(k, v)
+	for {
+		attempts++
+
+		var body io.Reader
+		if cfg.method != http.MethodGet && bodyBytes != nil {
+			body = bytes.NewReader(bodyBytes)
 		}
-	}
-	if cfg.method != http.MethodGet && req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: err}
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, cfg.method, u.String(), body)
+		if err != nil {
+			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: fmt.Errorf("build request: %w", err)}
+		}
 
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-	if err != nil {
-		return RequestResult{WorkerID: workerID, Prompt: prompt, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
+		for k, vs := range baseHeaders {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+		if cfg.method != http.MethodGet && req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if cfg.retry.enabled() && retries < cfg.retry.MaxRetries && isRetryableDoError(err) {
+				retries++
+				delay := nextBackoffDelay(cfg.retry, retries, 0)
+				if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
+					return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
+				}
+				continue
+			}
+			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: err}
+		}
+
+		if cfg.retry.enabled() && retries < cfg.retry.MaxRetries && isRetryableHTTPStatus(resp.StatusCode) {
+			retryAfter, _ := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+			_ = resp.Body.Close()
+
+			retries++
+			delay := nextBackoffDelay(cfg.retry, retries, retryAfter)
+			if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
+				return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
+			}
+			continue
+		}
+
+		defer resp.Body.Close()
+
+		b, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+		if err != nil {
+			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
+		}
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b}
 	}
-	return RequestResult{WorkerID: workerID, Prompt: prompt, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b}
 }
 
 type rateLimiter struct {

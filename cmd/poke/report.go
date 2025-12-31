@@ -17,6 +17,8 @@ type report struct {
 	errs     int
 	firstErr error
 	byStatus map[int]int
+	retried  int
+	retries  int
 
 	latencyCount int
 	latencyTotal time.Duration
@@ -96,6 +98,10 @@ func (r *report) RecordResult(res RequestResult) {
 
 	r.mu.Lock()
 	r.total++
+	if res.Retries > 0 {
+		r.retried++
+		r.retries += res.Retries
+	}
 
 	if res.Err != nil {
 		r.errs++
@@ -170,6 +176,9 @@ func (r *report) LogSummary() {
 	defer r.mu.Unlock()
 
 	log.Printf("%s: sent=%d errs=%d", styledKey("done", ansiGreen, ansiBold), r.total, r.errs)
+	if r.retried > 0 {
+		log.Printf("%s: requests=%d retries=%d", styledKey("retried", ansiYellow, ansiBold), r.retried, r.retries)
+	}
 	if r.firstErr != nil {
 		log.Printf("%s: %v", styledKey("first_error", ansiRed, ansiBold), r.firstErr)
 	}

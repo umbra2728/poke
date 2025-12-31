@@ -12,6 +12,10 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-headers-file`: `Header-Name: value` per line.
 - `-cookies-file`: `name=value` per line.
 - `-markers-file`: markers config JSON (regexes + per-category thresholds); see `markers.example.json`.
+- `-body-template`: JSON request body template (non-GET); supports `{{prompt}}`.
+- `-body-template-file`: file path to JSON request body template (non-GET); supports `{{prompt}}`.
+- `-query-template`: URL query template (`k=v&k2=v2`); values support `{{prompt}}`.
+- `-query-template-file`: file path to URL query template; values support `{{prompt}}`.
 - `-jsonl-out`: write per-request results as JSONL to a file.
 - `-csv-out`: write per-request results as CSV to a file.
 - `-ci-exit-codes`: map marker stop thresholds to CI-friendly exit codes (2=warn/info, 3=error, 4=critical).
@@ -25,8 +29,18 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-mutate-max`: cap variants per seed prompt (including the original); `<=0` means unlimited.
 
 ## Request shape
-- `GET`: attaches `?prompt=...`.
-- Non-`GET`: sends JSON `{"prompt": "..."}` and sets `Content-Type: application/json` unless you override via headers.
+- Default behavior (no templates):
+  - `GET`: attaches `?prompt=...`.
+  - Non-`GET`: sends JSON `{"prompt": "..."}` and sets `Content-Type: application/json` unless you override via headers.
+- With templates:
+  - `-body-template` / `-body-template-file`: provide a valid JSON value (object/array/etc). Any string value may include `{{prompt}}`, which is replaced before re-marshaling (so the prompt is JSON-escaped safely).
+  - `-query-template` / `-query-template-file`: provide `k=v&k2=v2` (optional leading `?`). Values may include `{{prompt}}` and will be URL-encoded safely.
+
+Example body template:
+`{"model":"my-model","messages":[{"role":"user","content":"{{prompt}}"}]}`
+
+Example query template:
+`model=my-model&prompt={{prompt}}`
 
 ## Inputs
 - Prompts file: one prompt per line; blank lines and `#` comments are ignored.
@@ -54,7 +68,7 @@ See `examples/github-actions-poke.yml` for a stub workflow that runs `poke`, upl
 Lightweight generators add noisy prefixes/suffixes, delimiter tweaks, and role swaps to widen coverage without hand-writing every payload.
 
 ## Roadmap ideas
-- Configurable body schema (templated JSON/query parameters beyond `prompt`).
+- Configurable body schema (templated JSON/query parameters beyond `prompt`). (implemented)
 - Jittered rate limiting for sturdier runs.
 - Richer markers (file/path/key leaks, PII snippets).
 - Auth helpers: header/cookie presets and env var expansion.

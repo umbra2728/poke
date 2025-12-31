@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +34,10 @@ type config struct {
 	headersFile string
 	cookiesFile string
 	markersFile string
+	bodyTmplStr string
+	bodyTmplFile string
+	queryTmplStr string
+	queryTmplFile string
 	workers     int
 	rate        float64
 	timeout     time.Duration
@@ -45,6 +48,8 @@ type config struct {
 	jsonlOut    string
 	csvOut      string
 	ciExitCodes bool
+
+	reqTemplate requestTemplate
 }
 
 func main() {
@@ -87,6 +92,10 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.headersFile, "headers-file", "", "Path to headers file (Key: Value per line); optional")
 	fs.StringVar(&cfg.cookiesFile, "cookies-file", "", "Path to cookies file (name=value per line); optional")
 	fs.StringVar(&cfg.markersFile, "markers-file", "", "Path to markers config JSON (regexes + per-category thresholds); optional")
+	fs.StringVar(&cfg.bodyTmplStr, "body-template", "", "JSON request body template (non-GET); supports {{prompt}} placeholder")
+	fs.StringVar(&cfg.bodyTmplFile, "body-template-file", "", "Path to JSON request body template file; supports {{prompt}} placeholder")
+	fs.StringVar(&cfg.queryTmplStr, "query-template", "", "URL query template (k=v&k2=v2); values support {{prompt}} placeholder")
+	fs.StringVar(&cfg.queryTmplFile, "query-template-file", "", "Path to URL query template file; values support {{prompt}} placeholder")
 	fs.IntVar(&cfg.workers, "workers", defaultWorkers, "Number of concurrent workers")
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
@@ -108,6 +117,12 @@ func parseFlags(args []string) (config, error) {
 	}
 	if cfg.targetURL == "" || cfg.promptsFile == "" {
 		return config{}, usageError(fmt.Errorf("missing required flags: -url and -prompts"), fs)
+	}
+	if cfg.bodyTmplStr != "" && cfg.bodyTmplFile != "" {
+		return config{}, usageError(fmt.Errorf("only one of -body-template or -body-template-file may be set"), fs)
+	}
+	if cfg.queryTmplStr != "" && cfg.queryTmplFile != "" {
+		return config{}, usageError(fmt.Errorf("only one of -query-template or -query-template-file may be set"), fs)
 	}
 	if cfg.workers <= 0 {
 		return config{}, fmt.Errorf("-workers must be > 0")
@@ -160,6 +175,12 @@ func usageText(fs *flag.FlagSet) string {
 }
 
 func run(ctx context.Context, cfg config) error {
+	tmpl, err := loadRequestTemplate(cfg)
+	if err != nil {
+		return err
+	}
+	cfg.reqTemplate = tmpl
+
 	headers, err := readHeadersFile(cfg.headersFile)
 	if err != nil {
 		return err
@@ -285,23 +306,9 @@ func sendOne(
 ) RequestResult {
 	start := time.Now()
 
-	u, err := url.Parse(cfg.targetURL)
+	u, bodyBytes, err := buildTargetURLAndBody(cfg, prompt)
 	if err != nil {
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("parse -url: %w", err)}
-	}
-
-	var bodyBytes []byte
-	if cfg.method == http.MethodGet {
-		q := u.Query()
-		q.Set(defaultJSONKey, prompt)
-		u.RawQuery = q.Encode()
-	} else {
-		payload := map[string]string{defaultJSONKey: prompt}
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("marshal json payload: %w", err)}
-		}
-		bodyBytes = b
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: err}
 	}
 
 	var attempts int

@@ -1,7 +1,7 @@
 Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL you pass (GET or POST by default), sprays prompts, and spots risky responses via heuristics.
 
 ## Quickstart
-- Build: `go build ./...`
+- Build: `go build ./cmd/poke`
 - Basic run (POST JSON): `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.txt -workers 20 -rate 10 -timeout 15s`
 - With prompt mutations: `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.txt -mutate -mutate-max 12 -workers 20 -rate 10 -timeout 15s`
 

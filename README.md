@@ -2,8 +2,8 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 
 ## Quickstart
 - Build: `go build ./cmd/poke`
-- Basic run (POST JSON): `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.txt -workers 20 -rate 10 -timeout 15s`
-- With prompt mutations: `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.txt -mutate -mutate-max 12 -workers 20 -rate 10 -timeout 15s`
+- Basic run (POST JSON): `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.jsonl -workers 20 -rate 10 -timeout 15s`
+- With prompt mutations: `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.jsonl -mutate -mutate-max 12 -workers 20 -rate 10 -timeout 15s`
 
 ## Flags
 - `-url` (required): target endpoint.
@@ -43,7 +43,10 @@ Example query template:
 `model=my-model&prompt={{prompt}}`
 
 ## Inputs
-- Prompts file: one prompt per line; blank lines and `#` comments are ignored.
+- Prompts file:
+  - `.txt`: one prompt per line; blank lines and `#` comments are ignored.
+  - `.json`: either a top-level array of prompts, or an object with `"prompts": [...]`. Items may be strings or objects like `{"prompt":"...","disabled":false}`.
+  - `.jsonl` / `.ndjson`: one JSON value per line; each line is either a JSON string or an object like `{"prompt":"...","disabled":false}`. Blank lines and `#` comments are ignored.
 - Headers file: `Key: Value` lines, canonicalized.
 - Cookies file: `name=value` lines.
 

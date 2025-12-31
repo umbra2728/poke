@@ -29,25 +29,25 @@ const (
 )
 
 type config struct {
-	targetURL   string
-	method      string
-	headersFile string
-	cookiesFile string
-	markersFile string
-	bodyTmplStr string
-	bodyTmplFile string
-	queryTmplStr string
+	targetURL     string
+	method        string
+	headersFile   string
+	cookiesFile   string
+	markersFile   string
+	bodyTmplStr   string
+	bodyTmplFile  string
+	queryTmplStr  string
 	queryTmplFile string
-	workers     int
-	rate        float64
-	timeout     time.Duration
-	promptsFile string
-	mutate      bool
-	mutateMax   int
-	retry       retryConfig
-	jsonlOut    string
-	csvOut      string
-	ciExitCodes bool
+	workers       int
+	rate          float64
+	timeout       time.Duration
+	promptsFile   string
+	mutate        bool
+	mutateMax     int
+	retry         retryConfig
+	jsonlOut      string
+	csvOut        string
+	ciExitCodes   bool
 
 	reqTemplate requestTemplate
 }
@@ -99,7 +99,7 @@ func parseFlags(args []string) (config, error) {
 	fs.IntVar(&cfg.workers, "workers", defaultWorkers, "Number of concurrent workers")
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
-	fs.StringVar(&cfg.promptsFile, "prompts", "", "Prompt source file (one prompt per line); use '-' for stdin (required)")
+	fs.StringVar(&cfg.promptsFile, "prompts", "", "Prompt source file (.txt/.json/.jsonl); use '-' for stdin (required)")
 	fs.BoolVar(&cfg.mutate, "mutate", false, "Generate simple mutations (prefix/suffix noise, role swaps, delimiter changes)")
 	fs.IntVar(&cfg.mutateMax, "mutate-max", 12, "Max prompt variants per seed when -mutate is set (including the original); <=0 = unlimited")
 	fs.IntVar(&cfg.retry.MaxRetries, "retries", 0, "Max retries for transport errors/429/5xx; 0 = disabled")

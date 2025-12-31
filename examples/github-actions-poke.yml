@@ -29,7 +29,7 @@ jobs:
           ./poke \
             -url "$POKE_URL" \
             -method POST \
-            -prompts corpus/seed_prompts.txt \
+            -prompts corpus/seed_prompts.jsonl \
             -workers 10 \
             -rate 5 \
             -timeout 15s \
@@ -46,4 +46,3 @@ jobs:
           path: |
             poke.results.jsonl
             poke.results.csv
-

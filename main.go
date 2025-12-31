@@ -14,19 +14,19 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"poke/promptset"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	defaultWorkers  = 10
-	defaultTimeout  = 30 * time.Second
-	maxPromptBytes  = 1 << 20  // 1 MiB
-	maxBodyBytes    = 2 << 20  // 2 MiB
-	progressEveryN  = 100
-	defaultMethod   = "POST"
-	defaultJSONKey  = "prompt"
+	defaultWorkers = 10
+	defaultTimeout = 30 * time.Second
+	maxBodyBytes   = 2 << 20 // 2 MiB
+	progressEveryN = 100
+	defaultMethod  = "POST"
+	defaultJSONKey = "prompt"
 )
 
 type config struct {
@@ -38,6 +38,8 @@ type config struct {
 	rate        float64
 	timeout     time.Duration
 	promptsFile string
+	mutate      bool
+	mutateMax   int
 }
 
 func main() {
@@ -74,6 +76,8 @@ func parseFlags(args []string) (config, error) {
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
 	fs.StringVar(&cfg.promptsFile, "prompts", "", "Prompt source file (one prompt per line); use '-' for stdin (required)")
+	fs.BoolVar(&cfg.mutate, "mutate", false, "Generate simple mutations (prefix/suffix noise, role swaps, delimiter changes)")
+	fs.IntVar(&cfg.mutateMax, "mutate-max", 12, "Max prompt variants per seed when -mutate is set (including the original); <=0 = unlimited")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -89,6 +93,9 @@ func parseFlags(args []string) (config, error) {
 	}
 	if cfg.rate < 0 {
 		return config{}, fmt.Errorf("-rate must be >= 0")
+	}
+	if cfg.mutateMax == 0 {
+		// Accept 0 (unlimited) but keep the flag description simple.
 	}
 	cfg.method = strings.ToUpper(strings.TrimSpace(cfg.method))
 	if cfg.method == "" {
@@ -152,7 +159,10 @@ func run(ctx context.Context, cfg config) error {
 	readErr := make(chan error, 1)
 	go func() {
 		defer close(prompts)
-		readErr <- streamPrompts(ctx, cfg.promptsFile, prompts)
+		readErr <- promptset.Stream(ctx, cfg.promptsFile, prompts, promptset.Options{
+			Mutate:      cfg.mutate,
+			MaxVariants: cfg.mutateMax,
+		})
 	}()
 
 	wg.Wait()
@@ -162,40 +172,6 @@ func run(ctx context.Context, cfg config) error {
 	}
 
 	stats.LogSummary()
-	return nil
-}
-
-func streamPrompts(ctx context.Context, path string, out chan<- string) error {
-	var r io.Reader
-	if path == "-" {
-		r = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("open prompts file: %w", err)
-		}
-		defer f.Close()
-		r = f
-	}
-
-	sc := bufio.NewScanner(r)
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, maxPromptBytes)
-
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- line:
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("read prompts: %w", err)
-	}
 	return nil
 }
 
@@ -419,11 +395,11 @@ func readLines(path string, kind string) ([]string, error) {
 }
 
 type stats struct {
-	mu          sync.Mutex
-	total       int
-	errs        int
-	byStatus    map[int]int
-	firstErr    error
+	mu       sync.Mutex
+	total    int
+	errs     int
+	byStatus map[int]int
+	firstErr error
 }
 
 func newStats() *stats {

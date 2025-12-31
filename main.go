@@ -146,7 +146,8 @@ func run(ctx context.Context, cfg config) error {
 	prompts := make(chan string, cfg.workers*2)
 	var wg sync.WaitGroup
 
-	stats := newStats()
+	analyzer := newResponseAnalyzer()
+	stats := newReport(analyzer)
 
 	wg.Add(cfg.workers)
 	for i := 0; i < cfg.workers; i++ {
@@ -184,7 +185,7 @@ func worker(
 	baseHeaders http.Header,
 	cookies []*http.Cookie,
 	in <-chan string,
-	stats *stats,
+	stats *report,
 ) {
 	for {
 		select {
@@ -199,12 +200,8 @@ func worker(
 				return
 			}
 
-			resp, body, err := sendOne(ctx, client, cfg, baseHeaders, cookies, prompt)
-			if err != nil {
-				stats.RecordError(err)
-				continue
-			}
-			analyzePlaceholder(workerID, prompt, resp, body, stats)
+			res := sendOne(ctx, client, cfg, baseHeaders, cookies, workerID, prompt)
+			stats.RecordResult(res)
 		}
 	}
 }
@@ -215,11 +212,14 @@ func sendOne(
 	cfg config,
 	baseHeaders http.Header,
 	cookies []*http.Cookie,
+	workerID int,
 	prompt string,
-) (*http.Response, []byte, error) {
+) RequestResult {
+	start := time.Now()
+
 	u, err := url.Parse(cfg.targetURL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse -url: %w", err)
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("parse -url: %w", err)}
 	}
 
 	var body io.Reader
@@ -231,14 +231,14 @@ func sendOne(
 		payload := map[string]string{defaultJSONKey: prompt}
 		b, err := json.Marshal(payload)
 		if err != nil {
-			return nil, nil, fmt.Errorf("marshal json payload: %w", err)
+			return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("marshal json payload: %w", err)}
 		}
 		body = bytes.NewReader(b)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, cfg.method, u.String(), body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build request: %w", err)
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: fmt.Errorf("build request: %w", err)}
 	}
 
 	for k, vs := range baseHeaders {
@@ -255,28 +255,15 @@ func sendOne(
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: err}
 	}
 	defer resp.Body.Close()
 
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read response body: %w", err)
+		return RequestResult{WorkerID: workerID, Prompt: prompt, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
 	}
-	return resp, b, nil
-}
-
-func analyzePlaceholder(workerID int, prompt string, resp *http.Response, body []byte, stats *stats) {
-	stats.RecordResponse(resp.StatusCode)
-	n := stats.Total()
-	if n%progressEveryN == 0 {
-		log.Printf("progress: sent=%d last_status=%d", n, resp.StatusCode)
-	}
-
-	// Placeholder for future analysis. Keep minimal to avoid noisy logs.
-	_ = workerID
-	_ = prompt
-	_ = body
+	return RequestResult{WorkerID: workerID, Prompt: prompt, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b}
 }
 
 type rateLimiter struct {
@@ -392,51 +379,4 @@ func readLines(path string, kind string) ([]string, error) {
 		return nil, fmt.Errorf("read %s file: %w", kind, err)
 	}
 	return out, nil
-}
-
-type stats struct {
-	mu       sync.Mutex
-	total    int
-	errs     int
-	byStatus map[int]int
-	firstErr error
-}
-
-func newStats() *stats {
-	return &stats{byStatus: make(map[int]int)}
-}
-
-func (s *stats) RecordResponse(status int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.total++
-	s.byStatus[status]++
-}
-
-func (s *stats) RecordError(err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.total++
-	s.errs++
-	if s.firstErr == nil {
-		s.firstErr = err
-	}
-}
-
-func (s *stats) Total() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.total
-}
-
-func (s *stats) LogSummary() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	log.Printf("done: sent=%d errs=%d", s.total, s.errs)
-	if s.firstErr != nil {
-		log.Printf("first_error: %v", s.firstErr)
-	}
-	for code, n := range s.byStatus {
-		log.Printf("status_%d: %d", code, n)
-	}
 }

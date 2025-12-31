@@ -19,3 +19,7 @@ Files:
 Behavior:
 - `GET`: sends `?prompt=...`
 - non-`GET`: sends JSON body `{"prompt":"..."}` and sets `Content-Type: application/json` unless overridden
+
+Output:
+- Periodic progress logs every 100 requests.
+- Final summary includes HTTP status counts, latency (min/avg/max), marker counts by category/type (jailbreak-success phrases, system/internal leaks, HTTP 4xx/5xx, rate-limit), and top offending responses (prompt/response previews).

@@ -12,17 +12,18 @@ import (
 )
 
 type requestEvent struct {
-	Time        time.Time
-	Seq         int
-	WorkerID    int
-	Prompt      string
-	Attempts    int
-	Retries     int
-	StatusCode  int
-	Latency     time.Duration
-	BodyLen     int
-	BodyPreview string
-	Error       string
+	Time          time.Time
+	Seq           int
+	WorkerID      int
+	Prompt        string
+	Attempts      int
+	Retries       int
+	StatusCode    int
+	Latency       time.Duration
+	BodyLen       int
+	BodyTruncated bool
+	BodyPreview   string
+	Error         string
 
 	MarkerHits []MarkerHit
 	Score      int
@@ -71,38 +72,40 @@ func newJSONLWriter(path string) (*jsonlWriter, error) {
 }
 
 type jsonlRow struct {
-	Time        string      `json:"time"`
-	Seq         int         `json:"seq"`
-	WorkerID    int         `json:"worker_id"`
-	Prompt      string      `json:"prompt"`
-	Attempts    int         `json:"attempts"`
-	Retries     int         `json:"retries"`
-	StatusCode  int         `json:"status_code"`
-	LatencyMS   int64       `json:"latency_ms"`
-	BodyLen     int         `json:"body_len"`
-	BodyPreview string      `json:"body_preview,omitempty"`
-	Error       string      `json:"error,omitempty"`
-	MarkerHits  []MarkerHit `json:"marker_hits,omitempty"`
-	Score       int         `json:"score"`
-	Severity    string      `json:"severity"`
+	Time          string      `json:"time"`
+	Seq           int         `json:"seq"`
+	WorkerID      int         `json:"worker_id"`
+	Prompt        string      `json:"prompt"`
+	Attempts      int         `json:"attempts"`
+	Retries       int         `json:"retries"`
+	StatusCode    int         `json:"status_code"`
+	LatencyMS     int64       `json:"latency_ms"`
+	BodyLen       int         `json:"body_len"`
+	BodyTruncated bool        `json:"body_truncated"`
+	BodyPreview   string      `json:"body_preview,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	MarkerHits    []MarkerHit `json:"marker_hits,omitempty"`
+	Score         int         `json:"score"`
+	Severity      string      `json:"severity"`
 }
 
 func (w *jsonlWriter) Write(e requestEvent) error {
 	row := jsonlRow{
-		Time:        e.Time.UTC().Format(time.RFC3339Nano),
-		Seq:         e.Seq,
-		WorkerID:    e.WorkerID,
-		Prompt:      e.Prompt,
-		Attempts:    e.Attempts,
-		Retries:     e.Retries,
-		StatusCode:  e.StatusCode,
-		LatencyMS:   e.Latency.Milliseconds(),
-		BodyLen:     e.BodyLen,
-		Error:       e.Error,
-		MarkerHits:  e.MarkerHits,
-		Score:       e.Score,
-		Severity:    e.Severity.String(),
-		BodyPreview: e.BodyPreview,
+		Time:          e.Time.UTC().Format(time.RFC3339Nano),
+		Seq:           e.Seq,
+		WorkerID:      e.WorkerID,
+		Prompt:        e.Prompt,
+		Attempts:      e.Attempts,
+		Retries:       e.Retries,
+		StatusCode:    e.StatusCode,
+		LatencyMS:     e.Latency.Milliseconds(),
+		BodyLen:       e.BodyLen,
+		BodyTruncated: e.BodyTruncated,
+		Error:         e.Error,
+		MarkerHits:    e.MarkerHits,
+		Score:         e.Score,
+		Severity:      e.Severity.String(),
+		BodyPreview:   e.BodyPreview,
 	}
 
 	b, err := json.Marshal(row)
@@ -156,6 +159,7 @@ func newCSVWriter(path string) (*csvWriter, error) {
 		"status_code",
 		"latency_ms",
 		"body_len",
+		"body_truncated",
 		"severity",
 		"score",
 		"marker_hits",
@@ -195,6 +199,7 @@ func (w *csvWriter) Write(e requestEvent) error {
 		intToString(e.StatusCode),
 		intToString(int(e.Latency.Milliseconds())),
 		intToString(e.BodyLen),
+		boolToString(e.BodyTruncated),
 		e.Severity.String(),
 		intToString(e.Score),
 		markerHitsCSV(e.MarkerHits),

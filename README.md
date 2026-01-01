@@ -24,6 +24,8 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-retries`: max retries for transport errors/429/5xx; `0` = disabled.
 - `-backoff-min`: minimum retry backoff delay.
 - `-backoff-max`: maximum retry backoff delay; `0` = no cap.
+- `-max-response-bytes`: max response bytes to read/store/analyze; `0` = unlimited (can OOM).
+- `-stream-response`: stream response body reads and truncate at `-max-response-bytes` (faster; truncation may be conservative).
 
 ## Request shape
 - Default behavior (no templates):

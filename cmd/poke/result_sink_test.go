@@ -21,20 +21,21 @@ func TestResultSink_JSONLAndCSV(t *testing.T) {
 	}
 
 	s.Write(requestEvent{
-		Time:        time.Unix(0, 0).UTC(),
-		Seq:         1,
-		WorkerID:    2,
-		Prompt:      "hello",
-		Attempts:    1,
-		Retries:     0,
-		StatusCode:  200,
-		Latency:     123 * time.Millisecond,
-		BodyLen:     2,
-		BodyPreview: "ok",
-		Error:       "",
-		MarkerHits:  []MarkerHit{{ID: "m1", Category: CategorySystemLeak, Count: 2}},
-		Score:       9,
-		Severity:    severityError,
+		Time:          time.Unix(0, 0).UTC(),
+		Seq:           1,
+		WorkerID:      2,
+		Prompt:        "hello",
+		Attempts:      1,
+		Retries:       0,
+		StatusCode:    200,
+		Latency:       123 * time.Millisecond,
+		BodyLen:       2,
+		BodyTruncated: false,
+		BodyPreview:   "ok",
+		Error:         "",
+		MarkerHits:    []MarkerHit{{ID: "m1", Category: CategorySystemLeak, Count: 2}},
+		Score:         9,
+		Severity:      severityError,
 	})
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)

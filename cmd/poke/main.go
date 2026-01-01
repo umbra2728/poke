@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	defaultWorkers = 10
-	defaultTimeout = 30 * time.Second
-	maxBodyBytes   = 2 << 20 // 2 MiB
-	progressEveryN = 100
-	defaultMethod  = "POST"
-	defaultJSONKey = "prompt"
+	defaultWorkers          = 10
+	defaultTimeout          = 30 * time.Second
+	defaultMaxResponseBytes = 2 << 20 // 2 MiB
+	progressEveryN          = 100
+	defaultMethod           = "POST"
+	defaultJSONKey          = "prompt"
 )
 
 type config struct {
@@ -38,6 +38,8 @@ type config struct {
 	bodyTmplFile  string
 	queryTmplStr  string
 	queryTmplFile string
+	maxRespBytes  int64
+	streamResp    bool
 	workers       int
 	rate          float64
 	timeout       time.Duration
@@ -94,6 +96,8 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.bodyTmplFile, "body-template-file", "", "Path to JSON request body template file; supports {{prompt}} placeholder")
 	fs.StringVar(&cfg.queryTmplStr, "query-template", "", "URL query template (k=v&k2=v2); values support {{prompt}} placeholder")
 	fs.StringVar(&cfg.queryTmplFile, "query-template-file", "", "Path to URL query template file; values support {{prompt}} placeholder")
+	fs.Int64Var(&cfg.maxRespBytes, "max-response-bytes", defaultMaxResponseBytes, "Max response bytes to read/store/analyze (0 = unlimited)")
+	fs.BoolVar(&cfg.streamResp, "stream-response", false, "Stream response body reads and truncate at -max-response-bytes (faster; truncation may be conservative)")
 	fs.IntVar(&cfg.workers, "workers", defaultWorkers, "Number of concurrent workers")
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
@@ -125,6 +129,9 @@ func parseFlags(args []string) (config, error) {
 	}
 	if cfg.rate < 0 {
 		return config{}, fmt.Errorf("-rate must be >= 0")
+	}
+	if cfg.maxRespBytes < 0 {
+		return config{}, fmt.Errorf("-max-response-bytes must be >= 0")
 	}
 	if err := cfg.retry.validate(); err != nil {
 		return config{}, usageError(err, fs)
@@ -356,11 +363,11 @@ func sendOne(
 
 		defer resp.Body.Close()
 
-		b, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+		b, truncated, err := readResponseBody(resp, cfg.maxRespBytes, cfg.streamResp)
 		if err != nil {
 			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
 		}
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b}
+		return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b, BodyTruncated: truncated}
 	}
 }
 

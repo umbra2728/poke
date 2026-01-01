@@ -47,6 +47,9 @@ func TestParseFlags_ValidatesRequiredAndConflicts(t *testing.T) {
 	if _, err := parseFlags([]string{"-url=https://example.test", "-prompts=x", "-rate=-1"}); err == nil {
 		t.Fatalf("expected error")
 	}
+	if _, err := parseFlags([]string{"-url=https://example.test", "-prompts=x", "-max-response-bytes=-1"}); err == nil {
+		t.Fatalf("expected error")
+	}
 	if _, err := parseFlags([]string{"-url=https://example.test", "-prompts=x", "-method=   "}); err == nil {
 		t.Fatalf("expected error")
 	}

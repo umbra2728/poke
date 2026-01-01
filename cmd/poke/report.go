@@ -15,12 +15,13 @@ type report struct {
 	cancel   func(error)
 	sink     *resultSink
 
-	total    int
-	errs     int
-	firstErr error
-	byStatus map[int]int
-	retried  int
-	retries  int
+	total     int
+	errs      int
+	firstErr  error
+	byStatus  map[int]int
+	retried   int
+	retries   int
+	truncated int
 
 	latencyCount int
 	latencyTotal time.Duration
@@ -72,6 +73,7 @@ type offendingResponse struct {
 	MarkerIDs       []string
 	PromptPreview   string
 	ResponsePreview string
+	BodyTruncated   bool
 	Error           string
 }
 
@@ -134,6 +136,7 @@ func (r *report) RecordResult(res RequestResult) {
 			MarkerIDs:       markerIDs,
 			PromptPreview:   previewOneLine(res.Prompt, 140),
 			ResponsePreview: previewOneLineBytes(res.Body, 240),
+			BodyTruncated:   res.BodyTruncated,
 		}
 		if res.Err != nil {
 			off.Error = res.Err.Error()
@@ -153,6 +156,9 @@ func (r *report) RecordResult(res RequestResult) {
 	if res.Retries > 0 {
 		r.retried++
 		r.retries += res.Retries
+	}
+	if res.BodyTruncated {
+		r.truncated++
 	}
 
 	if res.Err != nil {
@@ -261,19 +267,20 @@ func (r *report) RecordResult(res RequestResult) {
 			bodyPreview = previewOneLineBytes(res.Body, 400)
 		}
 		ev := requestEvent{
-			Time:        time.Now(),
-			Seq:         seq,
-			WorkerID:    res.WorkerID,
-			Prompt:      res.Prompt,
-			Attempts:    res.Attempts,
-			Retries:     res.Retries,
-			StatusCode:  res.StatusCode,
-			Latency:     res.Latency,
-			BodyLen:     len(res.Body),
-			BodyPreview: bodyPreview,
-			MarkerHits:  hits,
-			Score:       score,
-			Severity:    reqSeverity,
+			Time:          time.Now(),
+			Seq:           seq,
+			WorkerID:      res.WorkerID,
+			Prompt:        res.Prompt,
+			Attempts:      res.Attempts,
+			Retries:       res.Retries,
+			StatusCode:    res.StatusCode,
+			Latency:       res.Latency,
+			BodyLen:       len(res.Body),
+			BodyTruncated: res.BodyTruncated,
+			BodyPreview:   bodyPreview,
+			MarkerHits:    hits,
+			Score:         score,
+			Severity:      reqSeverity,
 		}
 		if res.Err != nil {
 			ev.Error = res.Err.Error()
@@ -319,6 +326,9 @@ func (r *report) LogSummary() {
 	log.Printf("%s: %s", styledKey("severity", ansiYellow, ansiBold), styledValue(r.maxSeverity.String(), ansiYellow, ansiBold))
 	if r.retried > 0 {
 		log.Printf("%s: requests=%d retries=%d", styledKey("retried", ansiYellow, ansiBold), r.retried, r.retries)
+	}
+	if r.truncated > 0 {
+		log.Printf("%s: %d", styledKey("truncated_responses", ansiYellow, ansiBold), r.truncated)
 	}
 	if r.firstErr != nil {
 		log.Printf("%s: %v", styledKey("first_error", ansiRed, ansiBold), r.firstErr)
@@ -397,6 +407,9 @@ func (r *report) LogSummary() {
 				styledValue(off.Latency.String(), ansiBlue),
 				styledValue(ids, ansiCyan),
 			)
+			if off.BodyTruncated {
+				line += " " + styledKey("truncated", ansiYellow, ansiBold) + "=" + styledValue("true", ansiYellow, ansiBold)
+			}
 			if off.Error != "" {
 				line += " " + styledKey("err", ansiRed, ansiBold) + "=" + previewOneLine(off.Error, 140)
 			}

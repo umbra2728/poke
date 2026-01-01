@@ -210,3 +210,10 @@ func intToString(v int) string {
 	}
 	return string(b[i:])
 }
+
+func boolToString(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}

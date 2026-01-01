@@ -3,7 +3,6 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 ## Quickstart
 - Build: `go build ./cmd/poke`
 - Basic run (POST JSON): `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.jsonl -workers 20 -rate 10 -timeout 15s`
-- With prompt mutations: `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.jsonl -mutate -mutate-max 12 -workers 20 -rate 10 -timeout 15s`
 
 ## Flags
 - `-url` (required): target endpoint.
@@ -25,8 +24,6 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-retries`: max retries for transport errors/429/5xx; `0` = disabled.
 - `-backoff-min`: minimum retry backoff delay.
 - `-backoff-max`: maximum retry backoff delay; `0` = no cap.
-- `-mutate`: enable simple mutations (prefix/suffix noise, role swaps, delimiter changes).
-- `-mutate-max`: cap variants per seed prompt (including the original); `<=0` means unlimited.
 
 ## Request shape
 - Default behavior (no templates):
@@ -66,9 +63,6 @@ Markers are regex-driven and configurable at runtime via `-markers-file` (JSON).
 
 ## CI (GitHub Actions)
 See `examples/github-actions-poke.yml` for a stub workflow that runs `poke`, uploads `-jsonl-out`/`-csv-out`, and gates on exit codes.
-
-## Prompt mutations
-Lightweight generators add noisy prefixes/suffixes, delimiter tweaks, and role swaps to widen coverage without hand-writing every payload.
 
 ## Roadmap ideas
 - Configurable body schema (templated JSON/query parameters beyond `prompt`). (implemented)

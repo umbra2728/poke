@@ -42,8 +42,6 @@ type config struct {
 	rate          float64
 	timeout       time.Duration
 	promptsFile   string
-	mutate        bool
-	mutateMax     int
 	retry         retryConfig
 	jsonlOut      string
 	csvOut        string
@@ -100,8 +98,6 @@ func parseFlags(args []string) (config, error) {
 	fs.Float64Var(&cfg.rate, "rate", 0, "Global rate limit (requests/sec); 0 = unlimited")
 	fs.DurationVar(&cfg.timeout, "timeout", defaultTimeout, "Per-request timeout (e.g. 10s, 1m)")
 	fs.StringVar(&cfg.promptsFile, "prompts", "", "Prompt source file (.txt/.json/.jsonl); use '-' for stdin (required)")
-	fs.BoolVar(&cfg.mutate, "mutate", false, "Generate simple mutations (prefix/suffix noise, role swaps, delimiter changes)")
-	fs.IntVar(&cfg.mutateMax, "mutate-max", 12, "Max prompt variants per seed when -mutate is set (including the original); <=0 = unlimited")
 	fs.IntVar(&cfg.retry.MaxRetries, "retries", 0, "Max retries for transport errors/429/5xx; 0 = disabled")
 	fs.DurationVar(&cfg.retry.BackoffMin, "backoff-min", 200*time.Millisecond, "Min retry backoff delay")
 	fs.DurationVar(&cfg.retry.BackoffMax, "backoff-max", 5*time.Second, "Max retry backoff delay; 0 = no cap")
@@ -129,9 +125,6 @@ func parseFlags(args []string) (config, error) {
 	}
 	if cfg.rate < 0 {
 		return config{}, fmt.Errorf("-rate must be >= 0")
-	}
-	if cfg.mutateMax == 0 {
-		// Accept 0 (unlimited) but keep the flag description simple.
 	}
 	if err := cfg.retry.validate(); err != nil {
 		return config{}, usageError(err, fs)
@@ -241,10 +234,7 @@ func run(ctx context.Context, cfg config) error {
 	readErr := make(chan error, 1)
 	go func() {
 		defer close(prompts)
-		readErr <- promptset.Stream(ctx, cfg.promptsFile, prompts, promptset.Options{
-			Mutate:      cfg.mutate,
-			MaxVariants: cfg.mutateMax,
-		})
+		readErr <- promptset.Stream(ctx, cfg.promptsFile, prompts, promptset.Options{})
 	}()
 
 	wg.Wait()

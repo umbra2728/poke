@@ -89,27 +89,13 @@ func TestStream_JSONL_Errors(t *testing.T) {
 	}
 }
 
-func TestEmitPrompt_MutateAndContextCancel(t *testing.T) {
+func TestEmitPrompt_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	outCh := make(chan string)
 
 	if err := send(ctx, outCh, "x"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected canceled, got %v", err)
-	}
-
-	ctx2 := context.Background()
-	outCh2 := make(chan string, 64)
-	if err := emitPrompt(ctx2, outCh2, "hello", Options{Mutate: true, MaxVariants: 5}); err != nil {
-		t.Fatalf("emitPrompt: %v", err)
-	}
-	close(outCh2)
-	var n int
-	for range outCh2 {
-		n++
-	}
-	if n < 2 {
-		t.Fatalf("expected multiple variants, got %d", n)
 	}
 }
 

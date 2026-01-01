@@ -14,8 +14,6 @@ import (
 const maxPromptBytes = 1 << 20 // 1 MiB
 
 type Options struct {
-	Mutate      bool
-	MaxVariants int // max variants per seed (including the original); <= 0 means "no limit"
 }
 
 func Stream(ctx context.Context, path string, out chan<- string, opt Options) error {
@@ -182,16 +180,7 @@ func streamJSONL(ctx context.Context, r io.Reader, out chan<- string, opt Option
 }
 
 func emitPrompt(ctx context.Context, out chan<- string, prompt string, opt Options) error {
-	if !opt.Mutate {
-		return send(ctx, out, prompt)
-	}
-	variants := Mutate(prompt, opt.MaxVariants)
-	for _, v := range variants {
-		if err := send(ctx, out, v); err != nil {
-			return err
-		}
-	}
-	return nil
+	return send(ctx, out, prompt)
 }
 
 func send(ctx context.Context, out chan<- string, prompt string) error {

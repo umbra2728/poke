@@ -186,8 +186,6 @@ func TestRun_Smoke(t *testing.T) {
 		rate:         0,
 		timeout:      2 * time.Second,
 		promptsFile:  prompts,
-		mutate:       false,
-		mutateMax:    12,
 		retry:        retryConfig{MaxRetries: 0},
 		jsonlOut:     jsonlOut,
 		csvOut:       csvOut,

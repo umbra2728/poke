@@ -151,4 +151,3 @@ func TestLoadRequestTemplate_InvalidBodyTemplateRejected(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
-

@@ -14,10 +14,10 @@ type markerConfig struct {
 }
 
 type regexMarkerConfig struct {
-	ID       string        `json:"id"`
+	ID       string         `json:"id"`
 	Category MarkerCategory `json:"category"`
-	Pattern  string        `json:"pattern"`
-	Enabled  bool          `json:"enabled"`
+	Pattern  string         `json:"pattern"`
+	Enabled  bool           `json:"enabled"`
 }
 
 type categoryPolicy struct {

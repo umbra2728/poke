@@ -42,11 +42,11 @@ type report struct {
 }
 
 type thresholdExceededError struct {
-	Category  MarkerCategory
-	Kind      string // "responses" | "matches"
-	Current   int
-	Limit     int
-	Severity  severityLevel
+	Category MarkerCategory
+	Kind     string // "responses" | "matches"
+	Current  int
+	Limit    int
+	Severity severityLevel
 }
 
 func (e thresholdExceededError) Error() string {
@@ -261,19 +261,19 @@ func (r *report) RecordResult(res RequestResult) {
 			bodyPreview = previewOneLineBytes(res.Body, 400)
 		}
 		ev := requestEvent{
-			Time:       time.Now(),
-			Seq:        seq,
-			WorkerID:   res.WorkerID,
-			Prompt:     res.Prompt,
-			Attempts:   res.Attempts,
-			Retries:    res.Retries,
-			StatusCode: res.StatusCode,
-			Latency:    res.Latency,
-			BodyLen:    len(res.Body),
+			Time:        time.Now(),
+			Seq:         seq,
+			WorkerID:    res.WorkerID,
+			Prompt:      res.Prompt,
+			Attempts:    res.Attempts,
+			Retries:     res.Retries,
+			StatusCode:  res.StatusCode,
+			Latency:     res.Latency,
+			BodyLen:     len(res.Body),
 			BodyPreview: bodyPreview,
-			MarkerHits: hits,
-			Score:      score,
-			Severity:   reqSeverity,
+			MarkerHits:  hits,
+			Score:       score,
+			Severity:    reqSeverity,
 		}
 		if res.Err != nil {
 			ev.Error = res.Err.Error()

@@ -69,6 +69,7 @@ Example query template:
 - Progress log every 100 requests.
 - Final summary: HTTP status counts, latency min/avg/max, overall severity, marker counts, top offending responses (prompt + response preview).
 - Optional per-request structured output via `-jsonl-out` / `-csv-out` (written to files; stdout stays human-friendly).
+- For live visibility while it runs, use `-trace` to log each request start/retry/finish (includes method/url, worker, attempt, latency, status/error).
 - Marker categories include jailbreak success, system/internal leak hints, PII patterns, credential/key material, file path/env hints, HTTP 4xx/5xx, and rate-limit signals (429/Retry-After/phrases).
 
 ### Structured output schemas

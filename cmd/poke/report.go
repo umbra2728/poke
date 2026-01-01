@@ -152,7 +152,11 @@ func (r *report) RecordResult(res RequestResult) {
 
 	r.mu.Lock()
 	r.total++
-	seq = r.total
+	if res.Seq > 0 {
+		seq = res.Seq
+	} else {
+		seq = r.total
+	}
 	if res.Retries > 0 {
 		r.retried++
 		r.retries += res.Retries

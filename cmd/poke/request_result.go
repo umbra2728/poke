@@ -6,6 +6,7 @@ import (
 )
 
 type RequestResult struct {
+	Seq           int
 	WorkerID      int
 	Prompt        string
 	Attempts      int

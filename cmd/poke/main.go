@@ -16,6 +16,7 @@ import (
 	"poke/promptset"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,9 +49,12 @@ type config struct {
 	jsonlOut      string
 	csvOut        string
 	ciExitCodes   bool
+	traceRequests bool
 
 	reqTemplate requestTemplate
 }
+
+var globalSeq uint64
 
 func main() {
 	log.SetFlags(0)
@@ -108,6 +112,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.jsonlOut, "jsonl-out", "", "Write per-request results to JSONL file (path); optional")
 	fs.StringVar(&cfg.csvOut, "csv-out", "", "Write per-request results to CSV file (path); optional")
 	fs.BoolVar(&cfg.ciExitCodes, "ci-exit-codes", false, "Use CI-friendly exit codes when marker stop thresholds trigger (2=warn/info, 3=error, 4=critical)")
+	fs.BoolVar(&cfg.traceRequests, "trace", false, "Log each request start/retry/finish to stderr (useful to see progress live)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -175,6 +180,8 @@ func usageText(fs *flag.FlagSet) string {
 }
 
 func run(ctx context.Context, cfg config) error {
+	atomic.StoreUint64(&globalSeq, 0)
+
 	tmpl, err := loadRequestTemplate(cfg)
 	if err != nil {
 		return err
@@ -301,11 +308,21 @@ func sendOne(
 	workerID int,
 	prompt string,
 ) RequestResult {
+	seq := int(atomic.AddUint64(&globalSeq, 1))
+
 	start := time.Now()
 
 	u, bodyBytes, err := buildTargetURLAndBody(cfg, prompt)
 	if err != nil {
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: err}
+		return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Latency: time.Since(start), Err: err}
+	}
+
+	if cfg.traceRequests {
+		bodyLen := 0
+		if bodyBytes != nil {
+			bodyLen = len(bodyBytes)
+		}
+		log.Printf("req_start: seq=%d worker=%d method=%s url=%s body_bytes=%d prompt=%q", seq, workerID, cfg.method, u.String(), bodyLen, previewOneLine(prompt, 160))
 	}
 
 	var attempts int
@@ -313,6 +330,7 @@ func sendOne(
 
 	for {
 		attempts++
+		attemptStart := time.Now()
 
 		var body io.Reader
 		if cfg.method != http.MethodGet && bodyBytes != nil {
@@ -321,7 +339,7 @@ func sendOne(
 
 		req, err := http.NewRequestWithContext(ctx, cfg.method, u.String(), body)
 		if err != nil {
-			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: fmt.Errorf("build request: %w", err)}
+			return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: fmt.Errorf("build request: %w", err)}
 		}
 
 		for k, vs := range baseHeaders {
@@ -336,17 +354,27 @@ func sendOne(
 			req.AddCookie(c)
 		}
 
+		if cfg.traceRequests {
+			log.Printf("req_wait: seq=%d worker=%d attempt=%d", seq, workerID, attempts)
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			if cfg.retry.enabled() && retries < cfg.retry.MaxRetries && isRetryableDoError(err) {
 				retries++
 				delay := nextBackoffDelay(cfg.retry, retries, 0)
+				if cfg.traceRequests {
+					log.Printf("req_retry: seq=%d worker=%d attempt=%d retry=%d delay=%s err=%q", seq, workerID, attempts, retries, delay.String(), previewOneLine(err.Error(), 200))
+				}
 				if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
-					return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
+					return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
 				}
 				continue
 			}
-			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: err}
+			if cfg.traceRequests {
+				log.Printf("req_done: seq=%d worker=%d attempt=%d status=ERR attempt_latency=%s total_latency=%s err=%q", seq, workerID, attempts, time.Since(attemptStart).String(), time.Since(start).String(), previewOneLine(err.Error(), 200))
+			}
+			return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, Latency: time.Since(start), Err: err}
 		}
 
 		if cfg.retry.enabled() && retries < cfg.retry.MaxRetries && isRetryableHTTPStatus(resp.StatusCode) {
@@ -355,8 +383,11 @@ func sendOne(
 
 			retries++
 			delay := nextBackoffDelay(cfg.retry, retries, retryAfter)
+			if cfg.traceRequests {
+				log.Printf("req_retry: seq=%d worker=%d attempt=%d retry=%d status=%d delay=%s", seq, workerID, attempts, retries, resp.StatusCode, delay.String())
+			}
 			if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
-				return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
+				return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries - 1, Latency: time.Since(start), Err: sleepErr}
 			}
 			continue
 		}
@@ -365,9 +396,15 @@ func sendOne(
 
 		b, truncated, err := readResponseBody(resp, cfg.maxRespBytes, cfg.streamResp)
 		if err != nil {
-			return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
+			if cfg.traceRequests {
+				log.Printf("req_done: seq=%d worker=%d attempt=%d status=%d attempt_latency=%s total_latency=%s err=%q", seq, workerID, attempts, resp.StatusCode, time.Since(attemptStart).String(), time.Since(start).String(), previewOneLine(err.Error(), 200))
+			}
+			return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Err: fmt.Errorf("read response body: %w", err)}
 		}
-		return RequestResult{WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b, BodyTruncated: truncated}
+		if cfg.traceRequests {
+			log.Printf("req_done: seq=%d worker=%d attempt=%d status=%d attempt_latency=%s total_latency=%s body_bytes=%d truncated=%t", seq, workerID, attempts, resp.StatusCode, time.Since(attemptStart).String(), time.Since(start).String(), len(b), truncated)
+		}
+		return RequestResult{Seq: seq, WorkerID: workerID, Prompt: prompt, Attempts: attempts, Retries: retries, StatusCode: resp.StatusCode, Headers: resp.Header.Clone(), Latency: time.Since(start), Body: b, BodyTruncated: truncated}
 	}
 }
 

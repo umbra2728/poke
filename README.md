@@ -1,11 +1,15 @@
+# poke
+
 Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL you pass (GET or POST by default), sprays prompts, and spots risky responses via heuristics.
 
 ## Quickstart
+
 - Build: `go build -o poke ./cmd/poke`
 - Run with markers + structured outputs:
   - `./poke -url http://localhost:8080/llm -prompts corpus/seed_prompts.jsonl -markers-file markers.example.json -jsonl-out poke.results.jsonl -csv-out poke.results.csv -ci-exit-codes`
 
 ## Flags
+
 - `-url` (required): target endpoint.
 - `-method`: HTTP method (default POST).
 - `-prompts` (required): prompt file or `-` for stdin.
@@ -29,6 +33,7 @@ Black-box prompt fuzzer for user-facing LLM-ish HTTP endpoints. Targets any URL 
 - `-stream-response`: stream response body reads and truncate at `-max-response-bytes` (faster; truncation may be conservative).
 
 ## Request shape
+
 - Default behavior (no templates):
   - `GET`: attaches `?prompt=...`.
   - Non-`GET`: sends JSON `{"prompt": "..."}` and sets `Content-Type: application/json` unless you override via headers.
@@ -43,6 +48,7 @@ Example query template:
 `model=my-model&prompt={{prompt}}`
 
 ## Common recipes
+
 - Retry on flaky endpoints / 429 / 5xx (exponential backoff + jitter; honors `Retry-After`): `-retries 2 -backoff-min 200ms -backoff-max 5s`
 - POST with a JSON body template:
   - `./poke -url https://example.com/chat -prompts corpus/seed_prompts.jsonl -body-template-file examples/body-template.example.json`
@@ -50,6 +56,7 @@ Example query template:
   - `./poke -url https://example.com/search -method GET -prompts corpus/seed_prompts.jsonl -query-template 'q={{prompt}}&mode=debug'`
 
 ## Inputs
+
 - Prompts file:
   - `.txt`: one prompt per line; blank lines and `#` comments are ignored.
   - `.json`: either a top-level array of prompts, or an object with `"prompts": [...]`. Items may be strings or objects like `{"prompt":"...","disabled":false}`.
@@ -58,12 +65,14 @@ Example query template:
 - Cookies file: `name=value` lines.
 
 ## Output & detection
+
 - Progress log every 100 requests.
 - Final summary: HTTP status counts, latency min/avg/max, overall severity, marker counts, top offending responses (prompt + response preview).
 - Optional per-request structured output via `-jsonl-out` / `-csv-out` (written to files; stdout stays human-friendly).
 - Marker categories include jailbreak success, system/internal leak hints, PII patterns, credential/key material, file path/env hints, HTTP 4xx/5xx, and rate-limit signals (429/Retry-After/phrases).
 
 ### Structured output schemas
+
 - JSONL: one JSON object per request (keys: `time`, `seq`, `worker_id`, `prompt`, `attempts`, `retries`, `status_code`, `latency_ms`, `body_len`, `body_truncated`, `body_preview`, `error`, `marker_hits`, `score`, `severity`).
   - `marker_hits` is an array of objects with keys `ID`, `Category`, `Count`.
 - CSV: stable columns: `time,seq,worker_id,attempts,retries,status_code,latency_ms,body_len,body_truncated,severity,score,marker_hits,error,prompt,body_preview`
@@ -71,6 +80,7 @@ Example query template:
 - Note: `-jsonl-out` / `-csv-out` only support file paths; `-` is not supported (stdout stays human-friendly).
 
 ## Markers & thresholds
+
 Markers are regex-driven and configurable at runtime via `-markers-file` (JSON).
 
 - By default, `-markers-file` *merges* with the built-in marker set (override by matching `category` + `id`, or add new ones).
@@ -79,13 +89,16 @@ Markers are regex-driven and configurable at runtime via `-markers-file` (JSON).
 - With `-ci-exit-codes`, runs that stop due to a category threshold exit with 2/3/4 based on that category's configured severity.
 
 ## Exit codes
+
 - Default: `0` on completion, `1` on errors (including threshold stops).
 - With `-ci-exit-codes`: threshold stops exit `2`/`3`/`4` for warn-or-info / error / critical categories (other failures still exit `1`).
 
 ## CI (GitHub Actions)
+
 See `examples/github-actions-poke.yml` for a stub workflow that runs `poke`, uploads `-jsonl-out`/`-csv-out`, and gates on exit codes.
 
 ## Roadmap ideas
+
 - Configurable body schema (templated JSON/query parameters beyond `prompt`). (implemented)
 - Jittered rate limiting for sturdier runs.
 - Richer markers (file/path/key leaks, PII snippets).

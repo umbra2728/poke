@@ -33,6 +33,7 @@ jobs:
             -workers 10 \
             -rate 5 \
             -timeout 15s \
+            -retries 2 \
             -markers-file markers.example.json \
             -jsonl-out poke.results.jsonl \
             -csv-out poke.results.csv \
